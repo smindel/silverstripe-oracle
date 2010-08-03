@@ -1,0 +1,32 @@
+Index: sapphire/core/model/SQLQuery.php
+===================================================================
+--- sapphire/core/model/SQLQuery.php	(revision 108844)
++++ sapphire/core/model/SQLQuery.php	(working copy)
+@@ -452,8 +452,8 @@
+ 		if($column == null) {
+ 			if($this->groupby) {
+ 				$countQuery = new SQLQuery();
+-				$countQuery->select = array("count(*)");
+-				$countQuery->from = array('(' . $clone->sql() . ') as all_distinct');
++				$countQuery->select = array("count(*) as all_distinct");
++				$countQuery->from = array('(' . $clone->sql() . ')');
+ 
+ 				return $countQuery->execute()->value();
+ 
+Index: sapphire/security/Permission.php
+===================================================================
+--- sapphire/security/Permission.php	(revision 108844)
++++ sapphire/security/Permission.php	(working copy)
+@@ -246,9 +246,9 @@
+ 				UNION
+ 				
+ 				SELECT \"Code\"
+-				FROM \"PermissionRoleCode\" AS PRC
+-				INNER JOIN \"PermissionRole\" AS PR ON PRC.\"RoleID\" = PR.\"ID\"
+-				INNER JOIN \"Group_Roles\" AS GR ON GR.\"PermissionRoleID\" = PR.\"ID\"
++				FROM \"PermissionRoleCode\" PRC
++				INNER JOIN \"PermissionRole\" PR ON PRC.\"RoleID\" = PR.\"ID\"
++				INNER JOIN \"Group_Roles\" GR ON GR.\"PermissionRoleID\" = PR.\"ID\"
+ 				WHERE \"GroupID\" IN ($groupCSV)
+ 			")->column());
+ 
