@@ -94,7 +94,15 @@ class OracleDatabase extends SS_Database {
 		return "oracle";
 	}
 
+	function mapinvalifidentifiers($match) {
+		return '"' . $this->_name($match[1]) . '"';
+	}
+
 	public function query($sql, $errorLevel = E_USER_ERROR) {
+		
+		$pattern = '/"(\w{31,})"(?=(?:(?:(?:[^\'\\\]++|\\.)*+\'){2})*+(?:[^\'\\\]++|\\.)*+$)/i';
+		$sql = preg_replace_callback($pattern, 'OracleDatabase::mapinvalifidentifiers', $sql);
+
 		if(isset($_REQUEST['previewwrite']) && in_array(strtolower(substr($sql,0,strpos($sql,' '))), array('insert','update','delete','replace'))) {
 			Debug::message("Will execute: $sql");
 			return;
@@ -105,7 +113,7 @@ class OracleDatabase extends SS_Database {
 		}
 
 		$handle = oci_parse($this->dbConn, $sql);
-		oci_execute($handle);
+		$success = oci_execute($handle);
 
 		if(isset($_REQUEST['showqueries'])) {
 			$endtime = round(microtime(true) - $starttime,4);
@@ -113,7 +121,12 @@ class OracleDatabase extends SS_Database {
 			else echo "\n$sql\n{$endtime}ms\n";
 		}
 
-		if(!$handle && $errorLevel) $this->databaseError("Couldn't run query: $sql | " . oci_error($this->dbConn), $errorLevel);
+		if(!$handle && $errorLevel) {
+			$error = oci_error();
+
+			$this->databaseError("Couldn't run query: $sql | " . $error['message'], $errorLevel);
+		}
+		
 		return new OracleQuery($this, $handle);
 	}
 
@@ -124,7 +137,7 @@ class OracleDatabase extends SS_Database {
 	protected $_idmap;
 
 	function _setupIdMapping() {
-		if(!(bool)($this->query("SELECT TABLE_NAME FROM ALL_TABLES WHERE OWNER='{$this->username}' AND TABLE_NAME LIKE '_IDENTIFIER_MAPPING'")->value())) {
+		if(!$this->query("SELECT TABLE_NAME FROM ALL_TABLES WHERE OWNER='{$this->username}' AND TABLE_NAME LIKE '_IDENTIFIER_MAPPING'")->value()) {
 			$this->query("CREATE TABLE \"_IDENTIFIER_MAPPING\" (\"Name\" VARCHAR2(200), \"Identifier\" VARCHAR2(30))");
 		}
 		if(is_null($this->_idmap)) {
@@ -140,7 +153,6 @@ class OracleDatabase extends SS_Database {
 			$i = 0;
 			while(empty($short)) {
 				$check = substr(substr($name, 0, 26) . '_000', 0, strlen(++$i) * -1) . $i;
-				aDebug($check);
 				if(array_search($check, $this->_idmap) === false) {
 					$short = $check;
 					$this->query("INSERT INTO \"_IDENTIFIER_MAPPING\" (\"Name\", \"Identifier\") VALUES ('$name', '$short')");
@@ -148,7 +160,9 @@ class OracleDatabase extends SS_Database {
 				}
 			}
 		}
-		return isset($this->_idmap[$name]) ? $this->_idmap[$name] : $name;
+		$return = isset($this->_idmap[$name]) ? $this->_idmap[$name] : $name;
+
+		return $return;
 	}
 
 	function _id($id) {
@@ -226,9 +240,8 @@ class OracleDatabase extends SS_Database {
 	 * @return The table name generated.  This may be different from the table name, for example with temporary tables.
 	 */
 	public function createTable($table, $fields = null, $indexes = null, $options = null, $advancedOptions = null) {
-		$sequence = $this->_name($table . '_sequence');
-		$trigger = $this->_name($table . '_trigger');
-		$table = $this->_name($table);
+		$sequence = $table . '_sequence';
+		$trigger = $table . '_trigger';
 		
 		$fieldSchemas = $indexSchemas = "";
 
@@ -258,15 +271,9 @@ class OracleDatabase extends SS_Database {
 	 */
 	public function alterTable($tableName, $newFields = null, $newIndexes = null, $alteredFields = null, $alteredIndexes = null, $alteredOptions = null, $advancedOptions = null) {
 		
-		$tableName = $this->_name($tableName);
-		
 		$fieldSchemas = $indexSchemas = "";
 		$alterList = array();
-if($tableName == 'SiteTree') {
-	// $this->query("DROP TABLE \"{$tableName}\"");
-	// $this->query("DROP SEQUENCE \"{$tableName}_sequence\"");
-	// $this->query("DROP TRIGGER \"{$tableName}_trigger\"");
-}
+
 		if($newFields) foreach($newFields as $k => $v) { 
 			if(preg_match('/\sPRIMARY KEY$/', $v)) {
 				$v = substr($v, 0, -12);
@@ -398,7 +405,7 @@ if($tableName == 'SiteTree') {
 					$fieldSpec .= " default '" . $this->addslashes($field['DATA_DEFAULT']) . "'";
 			}
 
-			$fieldList[$field['COLUMN_NAME']] = $fieldSpec;
+			$fieldList[$this->_name($field['COLUMN_NAME'])] = $fieldSpec;
 		}
 		return $fieldList;
 	}
@@ -756,7 +763,8 @@ if($tableName == 'SiteTree') {
 	/**
 	 * Returns the SQL command to get all the tables in this database
 	 */
-	function allTablesSQL(){
+	function allTablesSQL($iknowwhatiamdoing = false){
+		if(!$iknowwhatiamdoing) trigger_error('These table names can not be trusted. Pass them through OracleDatabase::_id().');
 		return "SELECT TABLE_NAME FROM ALL_TABLES WHERE OWNER='{$this->username}'";
 	}
 
@@ -766,7 +774,7 @@ if($tableName == 'SiteTree') {
 	 */
 	public function hasTable($table) {
 		$SQL_table = Convert::raw2sql($table);
-		$SQL_table=$this->_name($SQL_table);
+		$SQL_table = $this->_name($SQL_table);
 		return (bool)($this->query("SELECT TABLE_NAME FROM ALL_TABLES WHERE OWNER='{$this->username}' AND TABLE_NAME LIKE '$SQL_table'")->value());
 	}
 
