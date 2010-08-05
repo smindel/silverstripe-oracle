@@ -9,8 +9,7 @@
 
 ## Installation
  1. follow the usual [module installation process](http://doc.silverstripe.org/modules#installation)
- 2. patch sapphire with the enclosed sapphire.diff
- 3. add this code to your mysite/_config.php:
+ 2. add this code to your mysite/_config.php:
 
 $databaseConfig = array(
 	"type" => "OracleDatabase",
@@ -33,5 +32,5 @@ $databaseConfig = array(
  * adapter doesn't support transactions yet
  * search/unit tests doesn't work yet
  * datetime helper functions not yet implemented
- * cms sitetree is empty
+ * cms sitetree is empty due to parentid being null instead of 0
  * work in tablespace or database?
