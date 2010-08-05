@@ -38,6 +38,10 @@ class OracleDatabase extends SS_Database {
 
 		putenv("NLS_LANG=American_America.UTF8");
 		// ALTER SESSION SET NLS_DATE_FORMAT = 'YYYY-MM-DD HH24:MI:SS';
+		
+		if(SapphireTest::using_temp_db()) {
+			
+		}
 
 		$this->dbConn = oci_connect($parameters['username'], $parameters['password'], $parameters['server'], 'UTF8');
 
@@ -763,9 +767,8 @@ class OracleDatabase extends SS_Database {
 	/**
 	 * Returns the SQL command to get all the tables in this database
 	 */
-	function allTablesSQL($iknowwhatiamdoing = false){
-		if(!$iknowwhatiamdoing) trigger_error('These table names can not be trusted. Pass them through OracleDatabase::_id().');
-		return "SELECT TABLE_NAME FROM ALL_TABLES WHERE OWNER='{$this->username}'";
+	function allTablesSQL() {
+		return "SELECT CASE WHEN \"Name\" IS NOT NULL THEN \"Name\" ELSE TABLE_NAME END AS \"Tablename\" FROM ALL_TABLES LEFT JOIN \"_IDENTIFIER_MAPPING\" ON ALL_TABLES.TABLE_NAME = \"_IDENTIFIER_MAPPING\".\"Identifier\" WHERE OWNER='{$this->username}'";
 	}
 
 	/**
