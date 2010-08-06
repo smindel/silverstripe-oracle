@@ -23,7 +23,7 @@ class OracleDatabase extends SS_Database {
 
 	private $supportsTransactions=false;
 	
-	private $username;
+	static $test_config = array();
 
 	/**
 	 * Connect to a Oracle database.
@@ -35,29 +35,20 @@ class OracleDatabase extends SS_Database {
 	 *  - timezone: (optional) the timezone offset, eg: +12:00 for NZ time 
 	 */
 	public function __construct($parameters) {
-
 		putenv("NLS_LANG=American_America.UTF8");
-		// ALTER SESSION SET NLS_DATE_FORMAT = 'YYYY-MM-DD HH24:MI:SS';
 		
-		if(SapphireTest::using_temp_db()) {
-			
-		}
-
-		$this->dbConn = oci_connect($parameters['username'], $parameters['password'], $parameters['server'], 'UTF8');
+		$this->dbConn[$parameters['database']] = oci_connect($parameters['username'], $parameters['password'], $parameters['server'], 'UTF8');
 
 		$this->active = true;
 		$this->database = $parameters['database'];
 
-		$this->username = strtoupper($parameters['username']);
-
-		if(!$this->dbConn) {
+		if(!$this->dbConn[$this->database]) {
 			$this->databaseError("Couldn't connect to Oracle database");
 		}
 
 		$this->query("ALTER SESSION SET NLS_TIMESTAMP_FORMAT = 'YYYY-MM-DD HH24:MI:SS'");
-//		$this->query("create or replace procedure do_ddl(m_sql varchar2) as in_use exception; pragma exception_init(in_use, -54); begin while true loop begin execute immediate m_sql; exit; exception when in_use then null; end; dbms_lock.sleep(0.01); end loop; end");
 	}
-
+	
 	/**
 	 * Not implemented, needed for PDO
 	 */
@@ -85,7 +76,7 @@ class OracleDatabase extends SS_Database {
 	 */
 	public function getVersion() {
 		if(!$this->oracleVersion) {
-			$this->oracleVersion = oci_server_version($this->dbConn);
+			$this->oracleVersion = oci_server_version($this->dbConn[$this->database]);
 		}
 		return $this->oracleVersion;
 	}
@@ -104,7 +95,7 @@ class OracleDatabase extends SS_Database {
 
 	public function query($sql, $errorLevel = E_USER_ERROR) {
 		
-		$pattern = '/"(\w{31,})"(?=(?:(?:(?:[^\'\\\]++|\\.)*+\'){2})*+(?:[^\'\\\]++|\\.)*+$)/i';
+		$pattern = '/"(\w{31,})"'.'(?=(?:(?:(?:[^\'\\\]++|\\.)*+\'){2})*+(?:[^\'\\\]++|\\.)*+$)/i';
 		$sql = preg_replace_callback($pattern, 'OracleDatabase::mapinvalifidentifiers', $sql);
 
 		if(isset($_REQUEST['previewwrite']) && in_array(strtolower(substr($sql,0,strpos($sql,' '))), array('insert','update','delete','replace'))) {
@@ -116,12 +107,12 @@ class OracleDatabase extends SS_Database {
 			$starttime = microtime(true);
 		}
 
-		$handle = oci_parse($this->dbConn, $sql);
+		$handle = oci_parse($this->dbConn[$this->database], $sql);
 		$success = oci_execute($handle);
 
 		if(isset($_REQUEST['showqueries'])) {
 			$endtime = round(microtime(true) - $starttime,4);
-			if (!isset($_REQUEST['ajax'])) Debug::message("\n$sql\n{$endtime}ms\n", false);
+			if (!isset($_REQUEST['ajax'])) Debug::message("{$this->database}\n$sql\n{$endtime}ms\n", false);
 			else echo "\n$sql\n{$endtime}ms\n";
 		}
 
@@ -141,7 +132,7 @@ class OracleDatabase extends SS_Database {
 	protected $_idmap;
 
 	function _setupIdMapping() {
-		if(!$this->query("SELECT TABLE_NAME FROM ALL_TABLES WHERE OWNER='{$this->username}' AND TABLE_NAME LIKE '_IDENTIFIER_MAPPING'")->value()) {
+		if(!$this->query("SELECT TABLE_NAME FROM USER_TABLES WHERE TABLE_NAME LIKE '_IDENTIFIER_MAPPING'")->value()) {
 			$this->query("CREATE TABLE \"_IDENTIFIER_MAPPING\" (\"Name\" VARCHAR2(200), \"Identifier\" VARCHAR2(30))");
 		}
 		if(is_null($this->_idmap)) {
@@ -180,7 +171,16 @@ class OracleDatabase extends SS_Database {
 	}
 
 	public function createDatabase() {
-		trigger_error('not yet implemented');
+		$this->dbConn[$this->database] = oci_connect(self::$test_config['username'], self::$test_config['password'], self::$test_config['server'], 'UTF8');
+		$this->active = true;
+		if(!$this->dbConn[$this->database]) {
+			$this->databaseError("Couldn't connect to Oracle database");
+		}
+		$this->query("ALTER SESSION SET NLS_TIMESTAMP_FORMAT = 'YYYY-MM-DD HH24:MI:SS'");
+
+		$this->tableList = $this->fieldList = $this->indexList = $this->_idmap = null;
+
+		return true;
 	}
 
 	/**
@@ -196,7 +196,8 @@ class OracleDatabase extends SS_Database {
 	 * Use with caution.
 	 */
 	public function dropDatabaseByName($dbName) {
-		$this->query("DROP DATABASE \"$dbName\"");
+		$oa = new OracleAdmin(OracleDatabase::$test_config);
+		$oa->dropall(false);
 	}
 
 	/**
@@ -212,27 +213,27 @@ class OracleDatabase extends SS_Database {
 	 */
 	public function selectDatabase($dbname) {
 		$this->database = $dbname;
-		if($this->databaseExists($this->database)) {
-			trigger_error('not yet implemented');
-		}
-		$this->tableList = $this->fieldList = $this->indexList = null;
+		$this->tableList = $this->fieldList = $this->indexList = $this->_idmap = null;
 	}
 
 	/**
 	 * Returns true if the named database exists.
 	 */
 	public function databaseExists($name) {
-		$SQL_name = Convert::raw2sql($name);
-		return $this->query("SHOW DATABASES LIKE '$SQL_name'")->value() ? true : false;
+		return isset($this->dbConn[$name]);
 	}
 
 	/**
 	 * Returns a column 
 	 */
 	public function allDatabaseNames() {
-		return $this->query("SHOW DATABASES")->column();
+		return array_keys($this->dbConn);
 	}
 
+	function clearTable($table) {
+		$this->query("DELETE FROM \"{$table}\"");
+	}
+	
 	/**
 	 * Create a new table.
 	 * @param $tableName The name of the table
@@ -403,7 +404,7 @@ class OracleDatabase extends SS_Database {
 	public function fieldList($table) {
 		
 		$table = $this->_name($table);
-		$fields = DB::query("SELECT * FROM ALL_TAB_COLUMNS WHERE TABLE_NAME = '$table' ORDER BY COLUMN_ID");
+		$fields = DB::query("SELECT * FROM USER_TAB_COLUMNS WHERE TABLE_NAME = '$table' ORDER BY COLUMN_ID");
 
 		foreach($fields as $field) {
 
@@ -538,7 +539,7 @@ class OracleDatabase extends SS_Database {
 
 		$table = $this->_name($table);
 
-		$indexes = DB::query("SELECT * FROM ALL_INDEXES WHERE OWNER = '{$this->username}' AND TABLE_NAME = '{$table}'");
+		$indexes = DB::query("SELECT * FROM USER_INDEXES WHERE TABLE_NAME = '{$table}'");
 		
 		$indexList = array();
 		foreach($indexes as $index) {
@@ -562,7 +563,7 @@ class OracleDatabase extends SS_Database {
 	 */
 	public function tableList() {
 		$tables = array();
-		foreach($this->query("SELECT TABLE_NAME FROM ALL_TABLES WHERE OWNER='{$this->username}'") as $record) {
+		foreach($this->query("SELECT TABLE_NAME FROM USER_TABLES") as $record) {
 			$table = reset($record);
 			$tables[strtolower($table)] = $this->_id($table);
 		}
@@ -779,7 +780,7 @@ class OracleDatabase extends SS_Database {
 	 */
 	function allTablesSQL() {
 		if(is_null($this->_idmap)) $this->_setupIdMapping();
-		return "SELECT CASE WHEN \"Name\" IS NOT NULL THEN \"Name\" ELSE TABLE_NAME END AS \"Tablename\" FROM ALL_TABLES LEFT JOIN \"_IDENTIFIER_MAPPING\" ON ALL_TABLES.TABLE_NAME = \"_IDENTIFIER_MAPPING\".\"Identifier\" WHERE OWNER='{$this->username}'";
+		return "SELECT CASE WHEN \"Name\" IS NOT NULL THEN \"Name\" ELSE TABLE_NAME END AS \"Tablename\" FROM USER_TABLES LEFT JOIN \"_IDENTIFIER_MAPPING\" ON USER_TABLES.TABLE_NAME = \"_IDENTIFIER_MAPPING\".\"Identifier\"";
 	}
 
 	/**
@@ -789,7 +790,7 @@ class OracleDatabase extends SS_Database {
 	public function hasTable($table) {
 		$SQL_table = Convert::raw2sql($table);
 		$SQL_table = $this->_name($SQL_table);
-		return (bool)($this->query("SELECT TABLE_NAME FROM ALL_TABLES WHERE OWNER='{$this->username}' AND TABLE_NAME LIKE '$SQL_table'")->value());
+		return (bool)($this->query("SELECT TABLE_NAME FROM USER_TABLES WHERE TABLE_NAME LIKE '$SQL_table'")->value());
 	}
 
 	/**

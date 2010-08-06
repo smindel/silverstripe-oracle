@@ -1,6 +1,13 @@
 <?php
 
+OracleDatabase::$test_config = array(
+	'username' => 'test',
+	'password' => 'smindel',
+	'server' => 'puss/XE',
+);
+
 // $oa = new OracleAdmin($databaseConfig);
+// $oa = new OracleAdmin(OracleDatabase::$test_config);
 // $oa->dropall();
 // $oa->listnames();
 // die('done');
@@ -18,7 +25,7 @@ class OracleAdmin {
 	}
 	
 	function query($sql, $debug = false, $iknowwhatiamdoing = true) {
-		if(!$iknowwhatiamdoing) $sql = preg_replace_callback('/"(\w{31,})"(?=(?:(?:(?:[^\'\\\]++|\\.)*+\'){2})*+(?:[^\'\\\]++|\\.)*+$)/i', 'OracleDatabase::mapinvalifidentifiers', $sql);
+		if(!$iknowwhatiamdoing) $sql = preg_replace_callback('/"(\w{31,})"'.'(?=(?:(?:(?:[^\'\\\]++|\\.)*+\'){2})*+(?:[^\'\\\]++|\\.)*+$)/i', 'OracleDatabase::mapinvalifidentifiers', $sql);
 
 		if($debug) Debug::dump($sql);
 		
@@ -70,14 +77,14 @@ class OracleAdmin {
 		return $row[0];
 	}
 
-	function dropall() {
+	function dropall($verbose = true) {
 		$all = array(
 			'trigger' => "select trigger_name from all_triggers where owner = '{$this->username}'",
 			'sequence' => "select sequence_name from all_sequences where sequence_owner = '{$this->username}'",
 			'table' => "select table_name from all_tables where owner = '{$this->username}'",
 			'index' => "select index_name from all_indexes where owner = '{$this->username}'",
 		);
-		foreach($all as $type => $sql) foreach($this->col($sql) as $name) $this->query("drop $type \"$name\"", true);
+		foreach($all as $type => $sql) foreach($this->col($sql) as $name) $this->query("drop $type \"$name\"", $verbose);
 	}
 
 	function listnames() {
