@@ -257,9 +257,24 @@ class OracleDatabase extends SS_Database {
 		$temporary = empty($options['temporary']) ? "" : "TEMPORARY";
 
 		$lb = ' ';
-		$this->query("CREATE $temporary TABLE \"$table\" (\n\t" . implode(",\n\t", $fieldSchemas) . "\n)");
+		$this->query("CREATE $temporary TABLE \"$table\" (\n\t" . implode(",\n\t", $fieldSchemas) . ",\nPRIMARY KEY (ID))");
 		$this->query("CREATE SEQUENCE \"$sequence\" START WITH 1 INCREMENT BY 1");
 		$this->query("CREATE OR REPLACE TRIGGER \"$trigger\"{$lb}BEFORE INSERT ON \"{$table}\" FOR EACH ROW{$lb}BEGIN{$lb}SELECT \"$sequence\".nextval INTO :new.\"ID\" FROM DUAL;{$lb}END;{$lb}");
+
+		if($indexes) {
+			foreach($indexes as $indexName => $indexDetails) {
+				if(is_array($indexDetails)) {
+					$type = strtoupper($indexDetails['type']);
+					preg_match_all('/(\w+)/', $indexDetails['value'], $columns);
+					$columns = $columns[1];
+				} else {
+					$type = '';
+					preg_match_all('/(\w+)/', $indexDetails, $columns);
+					$columns = $columns[1];
+				}
+				$this->query("CREATE $type INDEX \"{$table}_{$indexName}\" ON \"{$table}\" (\n\t\"" . implode("\",\n\t\"", $columns) . "\")");
+			}
+		}
 		
 		return $table;
 	}
@@ -388,25 +403,31 @@ class OracleDatabase extends SS_Database {
 	public function fieldList($table) {
 		
 		$table = $this->_name($table);
-		
 		$fields = DB::query("SELECT * FROM ALL_TAB_COLUMNS WHERE TABLE_NAME = '$table' ORDER BY COLUMN_ID");
+
 		foreach($fields as $field) {
 
 			$fieldSpec = $field['DATA_TYPE'];
 
-			if(!empty($field['DATA_PRECISION'])) {
+			if(preg_match('/^TIMESTAMP/i', $field['DATA_TYPE'])) {
+				$fieldSpec = "TIMESTAMP";
+			} else if(preg_match('/^DATE/i', $field['DATA_TYPE'])) {
+				$fieldSpec = "DATE";
+			} else if(!empty($field['DATA_PRECISION'])) {
 				$fieldSpec .= empty($field['DATA_SCALE']) ? "({$field['DATA_PRECISION']})" : "({$field['DATA_PRECISION']},{$field['DATA_SCALE']})";
+			} else if($field['DATA_LENGTH']) {
+				$fieldSpec .= "({$field['DATA_LENGTH']})";
 			}
 
 			if(!$field['NULLABLE'] || $field['NULLABLE'] == 'N') {
-				$fieldSpec .= ' not null';
+				$fieldSpec .= ' NOT NULL';
 			}
 
 			if($field['DATA_DEFAULT'] || $field['DATA_DEFAULT'] === "0") {
 				if(is_numeric($field['DATA_DEFAULT']))
 					$fieldSpec .= " default " . $field['DATA_DEFAULT'];
 				else
-					$fieldSpec .= " default '" . $this->addslashes($field['DATA_DEFAULT']) . "'";
+					$fieldSpec .= " default " . $field['DATA_DEFAULT'] . "";
 			}
 
 			$fieldList[$this->_name($field['COLUMN_NAME'])] = $fieldSpec;
@@ -515,34 +536,35 @@ class OracleDatabase extends SS_Database {
 	 * @return array
 	 */
 	public function indexList($table) {
-		return;
-		$indexes = DB::query("SHOW INDEXES IN \"$table\"");
+
+		$table = $this->_name($table);
+
+		$indexes = DB::query("SELECT * FROM ALL_INDEXES WHERE OWNER = '{$this->username}' AND TABLE_NAME = '{$table}'");
+		
 		$groupedIndexes = array();
 		$indexList = array();
 
 		foreach($indexes as $index) {
-			$groupedIndexes[$index['Key_name']]['fields'][$index['Seq_in_index']] = $index['Column_name'];
-
-			if($index['Index_type'] == 'FULLTEXT') {
-				$groupedIndexes[$index['Key_name']]['type'] = 'fulltext ';
-			} else if(!$index['Non_unique']) {
-				$groupedIndexes[$index['Key_name']]['type'] = 'unique ';
-			} else if($index['Index_type'] =='HASH') {
-				$groupedIndexes[$index['Key_name']]['type'] = 'hash ';
-			} else if($index['Index_type'] =='RTREE') {
-				$groupedIndexes[$index['Key_name']]['type'] = 'rtree ';
-			} else {
-				$groupedIndexes[$index['Key_name']]['type'] = '';
+			if(!$index['UNIQUENESS'] == 'UNIQUE') {
+				$groupedIndexes[$index['INDEX_NAME']]['type'] = 'unique ';
+			}
+			
+			foreach(DB::query("SELECT * FROM USER_IND_COLUMNS WHERE INDEX_NAME = '{$index['INDEX_NAME']}'") as $col) {
+				$groupedIndexes[$index['INDEX_NAME']]['value'][$col['COLUMN_POSITION']] = $col['COLUMN_NAME'];
 			}
 		}
 
 		if($groupedIndexes) {
 			foreach($groupedIndexes as $index => $details) {
-				ksort($details['fields']);
-				$indexList[$index] = $details['type'] . '(' . implode(',',$details['fields']) . ')';
+				ksort($details['value']);
+				if(isset($details['type'])) {
+					$indexList[$index] = $details;
+				} else {
+					$indexList[$index] = implode('_',$details['value']);
+				}
 			}
 		}
-
+aDebug($indexList);
 		return $indexList;
 	}
 
@@ -587,7 +609,7 @@ class OracleDatabase extends SS_Database {
 		//For reference, this is what typically gets passed to this function:
 		//$parts=Array('datatype'=>'tinyint', 'precision'=>1, 'sign'=>'unsigned', 'null'=>'not null', 'default'=>$this->default);
 		//DB::requireField($this->tableName, $this->name, "tinyint(1) unsigned not null default '{$this->defaultVal}'");
-		return "CHAR default 0";
+		return "CHAR(1) default 0";
 	}
 
 	/**
@@ -691,7 +713,7 @@ class OracleDatabase extends SS_Database {
 		//$parts=Array('datatype'=>'int', 'precision'=>11, 'null'=>'not null', 'default'=>(int)$this->default);
 		//DB::requireField($this->tableName, $this->name, "int(11) not null default '{$this->defaultVal}'");
 
-		return 'NUMBER';
+		return 'NUMBER(11)';
 		return 'NUMBER not null default ' . (int)$values['default'];
 	}
 
@@ -761,13 +783,14 @@ class OracleDatabase extends SS_Database {
 	 * @return string
 	 */
 	function IdColumn(){
-		return 'NUMBER PRIMARY KEY';
+		return 'NUMBER(11) NOT NULL';
 	}
 
 	/**
 	 * Returns the SQL command to get all the tables in this database
 	 */
 	function allTablesSQL() {
+		if(is_null($this->_idmap)) $this->_setupIdMapping();
 		return "SELECT CASE WHEN \"Name\" IS NOT NULL THEN \"Name\" ELSE TABLE_NAME END AS \"Tablename\" FROM ALL_TABLES LEFT JOIN \"_IDENTIFIER_MAPPING\" ON ALL_TABLES.TABLE_NAME = \"_IDENTIFIER_MAPPING\".\"Identifier\" WHERE OWNER='{$this->username}'";
 	}
 
@@ -914,7 +937,15 @@ class OracleDatabase extends SS_Database {
 		if($sqlQuery->delete) {
 			$text = "DELETE ";
 		} else if($sqlQuery->select) {
-			$text = "SELECT $distinct" . implode(", ", $sqlQuery->select);
+			$selects = array();
+			foreach($sqlQuery->select as $select) {
+				if(preg_match('/"(\w+)"$/i', $select, $matches)) {
+					$selects['"' . $matches[1] . '"'] =  $select;
+				} else {
+					$selects[$select] =  $select;
+				}
+			}
+			$text = "SELECT $distinct" . implode(", ", $selects);
 		}
 		$text .= " FROM " . implode(" ", $sqlQuery->from);
 
@@ -931,11 +962,6 @@ class OracleDatabase extends SS_Database {
 			$limit = $sqlQuery->limit;
 			// Pass limit as array or SQL string value
 
-			$selectidentifier = array();
-			foreach($sqlQuery->select as $select) {
-				$selectidentifier[] = preg_match('/"(\w+)"$/i', $select, $matches) ? '"' . $matches[1] . '"' : $select;
-			}
-
 			if(is_array($limit)) {
 				if(!array_key_exists('limit',$limit)) user_error('SQLQuery::limit(): Wrong format for $limit', E_USER_ERROR);
 
@@ -946,10 +972,10 @@ class OracleDatabase extends SS_Database {
 				} else {
 					$combinedLimit = false;
 				}
-				if(!empty($combinedLimit)) $text = "SELECT " . implode(", ", $selectidentifier) . " FROM ($text) WHERE $combinedLimit";
+				if(!empty($combinedLimit)) $text = "SELECT " . implode(", ", array_keys($selecs)) . " FROM ($text) WHERE $combinedLimit";
 
 			} else {
-				$text = "SELECT " . implode(", ", $selectidentifier) . " FROM ($text) WHERE ROWNUM <= " . $sqlQuery->limit;
+				$text = "SELECT " . implode(", ", array_keys($selects)) . " FROM ($text) WHERE ROWNUM <= " . $sqlQuery->limit;
 			}
 		}
 		
@@ -968,7 +994,9 @@ class OracleDatabase extends SS_Database {
 	 * This changes the index name depending on database requirements.
 	 */
 	function modifyIndex($index){
-		return $index;
+		aDebug($index);
+		preg_match_all('/(\w+)/', $index, $matches);
+		return implode('_',$matches[1]);
 	}
 
 	/**
