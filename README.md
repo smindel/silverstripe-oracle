@@ -28,9 +28,9 @@ $databaseConfig = array(
 
  * no db data type fits large amounts of text
  * identifier are limited to 30 characters
- * adapter doesn't support indexes yet
  * adapter doesn't support transactions yet
- * search/unit tests doesn't work yet
+ * search doesn't work yet
+ * unit tests require another user
  * datetime helper functions not yet implemented
  * cms sitetree is empty due to parentid being null instead of 0
  * work in tablespace or database?

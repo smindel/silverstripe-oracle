@@ -419,15 +419,12 @@ class OracleDatabase extends SS_Database {
 				$fieldSpec .= "({$field['DATA_LENGTH']})";
 			}
 
-			if(!$field['NULLABLE'] || $field['NULLABLE'] == 'N') {
-				$fieldSpec .= ' NOT NULL';
+			if($field['DATA_DEFAULT'] || $field['DATA_DEFAULT'] === "0") {
+				$fieldSpec .= " DEFAULT " . trim($field['DATA_DEFAULT']);
 			}
 
-			if($field['DATA_DEFAULT'] || $field['DATA_DEFAULT'] === "0") {
-				if(is_numeric($field['DATA_DEFAULT']))
-					$fieldSpec .= " default " . $field['DATA_DEFAULT'];
-				else
-					$fieldSpec .= " default " . $field['DATA_DEFAULT'] . "";
+			if(!$field['NULLABLE'] || $field['NULLABLE'] == 'N') {
+				$fieldSpec .= ' NOT NULL';
 			}
 
 			$fieldList[$this->_name($field['COLUMN_NAME'])] = $fieldSpec;
@@ -457,10 +454,11 @@ class OracleDatabase extends SS_Database {
 	 */
 	public function convertIndexSpec($indexSpec){
 		if(is_array($indexSpec)){
+			$indexSpec['value'] = str_replace(' ', '', $indexSpec['value']);
 			//Here we create a db-specific version of whatever index we need to create.
 			switch($indexSpec['type']){
 				case 'fulltext':
-					$indexSpec='fulltext (' . str_replace(' ', '', $indexSpec['value']) . ')';
+					$indexSpec='fulltext (' . $indexSpec['value'] . ')';
 					break;
 				case 'unique':
 					$indexSpec='unique (' . $indexSpec['value'] . ')';
@@ -472,8 +470,9 @@ class OracleDatabase extends SS_Database {
 					$indexSpec='using hash (' . $indexSpec['value'] . ')';
 					break;
 			}
+		} else {
+			$indexSpec = str_replace(' ', '', $indexSpec);
 		}
-
 		return $indexSpec;
 	}
 
@@ -541,30 +540,19 @@ class OracleDatabase extends SS_Database {
 
 		$indexes = DB::query("SELECT * FROM ALL_INDEXES WHERE OWNER = '{$this->username}' AND TABLE_NAME = '{$table}'");
 		
-		$groupedIndexes = array();
 		$indexList = array();
-
 		foreach($indexes as $index) {
-			if(!$index['UNIQUENESS'] == 'UNIQUE') {
-				$groupedIndexes[$index['INDEX_NAME']]['type'] = 'unique ';
-			}
-			
+			$cols = array();
 			foreach(DB::query("SELECT * FROM USER_IND_COLUMNS WHERE INDEX_NAME = '{$index['INDEX_NAME']}'") as $col) {
-				$groupedIndexes[$index['INDEX_NAME']]['value'][$col['COLUMN_POSITION']] = $col['COLUMN_NAME'];
+				$cols[$col['COLUMN_POSITION']] = $col['COLUMN_NAME'];
 			}
+			ksort($cols);
+			$name = implode('_',$cols);
+			$spec = implode(',',$cols);
+			$indexList[$name] = $index['UNIQUENESS'] == 'UNIQUE' ? 'unique ' : '';
+			$indexList[$name] .= "($spec)";
 		}
 
-		if($groupedIndexes) {
-			foreach($groupedIndexes as $index => $details) {
-				ksort($details['value']);
-				if(isset($details['type'])) {
-					$indexList[$index] = $details;
-				} else {
-					$indexList[$index] = implode('_',$details['value']);
-				}
-			}
-		}
-aDebug($indexList);
 		return $indexList;
 	}
 
@@ -609,7 +597,7 @@ aDebug($indexList);
 		//For reference, this is what typically gets passed to this function:
 		//$parts=Array('datatype'=>'tinyint', 'precision'=>1, 'sign'=>'unsigned', 'null'=>'not null', 'default'=>$this->default);
 		//DB::requireField($this->tableName, $this->name, "tinyint(1) unsigned not null default '{$this->defaultVal}'");
-		return "CHAR(1) default 0";
+		return "CHAR(1) DEFAULT 0";
 	}
 
 	/**
@@ -646,7 +634,7 @@ aDebug($indexList);
 
 		$defaultValue = '';
 		if(isset($values['default']) && is_numeric($values['default'])) {
-			$defaultValue = ' default ' . $values['default'];
+			$defaultValue = ' DEFAULT ' . $values['default'];
 		}
 
 		return 'NUMBER(11,' . $precision . ')';
@@ -671,7 +659,7 @@ aDebug($indexList);
 			}
 			$this->enum_map[$tablefield] = implode(',', $values['enums']);
 		}
-		return "VARCHAR2(2000) default '{$values['default']}'";
+		return "VARCHAR2(2000) DEFAULT '{$values['default']}'";
 	}
 
 	/**
@@ -713,8 +701,8 @@ aDebug($indexList);
 		//$parts=Array('datatype'=>'int', 'precision'=>11, 'null'=>'not null', 'default'=>(int)$this->default);
 		//DB::requireField($this->tableName, $this->name, "int(11) not null default '{$this->defaultVal}'");
 
-		return 'NUMBER(11)';
-		return 'NUMBER not null default ' . (int)$values['default'];
+//		return 'NUMBER(11) NOT NULL';
+		return 'NUMBER(11) DEFAULT ' . (int)$values['default'] . ' NOT NULL';
 	}
 
 	/**
@@ -994,9 +982,7 @@ aDebug($indexList);
 	 * This changes the index name depending on database requirements.
 	 */
 	function modifyIndex($index){
-		aDebug($index);
-		preg_match_all('/(\w+)/', $index, $matches);
-		return implode('_',$matches[1]);
+		return $index;
 	}
 
 	/**
