@@ -180,6 +180,15 @@ class OracleDatabase extends SS_Database {
 
 		$this->tableList = $this->fieldList = $this->indexList = $this->_idmap = null;
 
+		$oa = new OracleAdmin(OracleDatabase::$test_config);
+		$all = array(
+			'table' => "select * from user_tables",
+			'sequence' => "select * from user_sequences",
+			'trigger' => "select * from user_triggers",
+			'index' => "select index_name from user_indexes",
+		);
+		foreach($all as $type => $sql) if(count($oa->col($sql, $type . '_name'))) trigger_error('Test database is not empty. Please clean up before you run tests.');
+
 		return true;
 	}
 
@@ -309,11 +318,17 @@ class OracleDatabase extends SS_Database {
 			$alterFieldList[] = "\"$k\" $v";
 		}
 
-		// if($newIndexes) foreach($newIndexes as $k => $v) $alterList[] .= "ADD " . $this->getIndexSqlDefinition($k, $v);
-		// if($alteredIndexes) foreach($alteredIndexes as $k => $v) {
-		// 	$alterList[] .= "DROP INDEX \"$k\"";
-		// 	$alterList[] .= "ADD ". $this->getIndexSqlDefinition($k, $v);
-		//  		}
+		if($newIndexes) {
+			aDebug('skip adding index', $newIndexes);
+			//foreach($newIndexes as $k => $v) $alterList[] .= "ADD " . $this->getIndexSqlDefinition($k, $v);
+		}
+		if($alteredIndexes) {
+			aDebug('skip changing index', $alteredIndexes);
+			// foreach($alteredIndexes as $k => $v) {
+			// 	$alterList[] .= "DROP INDEX \"$k\"";
+			// 	$alterList[] .= "ADD ". $this->getIndexSqlDefinition($k, $v);
+			// }
+		}
 
 		$alterations = '';
  		if(!empty($newFieldList)) $alterations .= ' ADD(' . implode(",\n", $newFieldList) . ')';
@@ -420,7 +435,7 @@ class OracleDatabase extends SS_Database {
 				$fieldSpec .= "({$field['DATA_LENGTH']})";
 			}
 
-			if($field['DATA_DEFAULT'] || $field['DATA_DEFAULT'] === "0") {
+			if($field['DATA_DEFAULT'] || $field['DATA_DEFAULT'] === "0" || $field['DATA_DEFAULT'] === 0) {
 				$fieldSpec .= " DEFAULT " . trim($field['DATA_DEFAULT']);
 			}
 
@@ -628,17 +643,17 @@ class OracleDatabase extends SS_Database {
 
 		// Avoid empty strings being put in the db
 		if($values['precision'] == '') {
-			$precision = 1;
+			$precision = '11,1';
 		} else {
 			$precision = $values['precision'];
 		}
 
 		$defaultValue = '';
-		if(isset($values['default']) && is_numeric($values['default'])) {
-			$defaultValue = ' DEFAULT ' . $values['default'];
+		if(isset($values['default'])) {
+			$defaultValue = ' DEFAULT ' . (float)$values['default'];
 		}
 
-		return 'NUMBER(11,' . $precision . ')';
+		return "NUMBER($precision)$defaultValue NOT NULL";
 	}
 
 	/**
@@ -732,6 +747,7 @@ class OracleDatabase extends SS_Database {
 		//DB::requireField($this->tableName, $this->name, "mediumtext character set utf8 collate utf8_general_ci");
 
 		return 'VARCHAR2(4000)';
+		return 'CLOB'; // does not work with DataObject::getManyManyComponentsQuery() because it is grouping by CLOBS
 	}
 
 	/**
@@ -902,7 +918,7 @@ class OracleDatabase extends SS_Database {
 	 * Returns the database-specific version of the random() function
 	 */
 	function random(){
-		return 'RAND()';
+		return 'DBMS_RANDOM.VALUE';
 	}
 
 	/*
@@ -951,17 +967,24 @@ class OracleDatabase extends SS_Database {
 			$limit = $sqlQuery->limit;
 			// Pass limit as array or SQL string value
 
+			// if(is_string($limit) && preg_match('/(\d+)\s*,\s*(\d+)/', trim($limit), $matches)) {
+			// 	$limit = array(
+			// 		'start' => $matches[1],
+			// 		'limit' => $matches[2],
+			// 	);
+			// }
+
 			if(is_array($limit)) {
 				if(!array_key_exists('limit',$limit)) user_error('SQLQuery::limit(): Wrong format for $limit', E_USER_ERROR);
 
 				if(isset($limit['start']) && is_numeric($limit['start']) && isset($limit['limit']) && is_numeric($limit['limit'])) {
-					$combinedLimit = "ROWNUM BETWEEN $limit[start] AND " . ($limit['start'] + $limit['limit']);
+					$combinedLimit = "ROWNUM BETWEEN " . ($limit['start'] + 1) . " AND " . ($limit['start'] + $limit['limit']);
 				} elseif(isset($limit['limit']) && is_numeric($limit['limit'])) {
 					$combinedLimit = "ROWNUM <= " . (int)$limit['limit'];
 				} else {
 					$combinedLimit = false;
 				}
-				if(!empty($combinedLimit)) $text = "SELECT " . implode(", ", array_keys($selecs)) . " FROM ($text) WHERE $combinedLimit";
+				if(!empty($combinedLimit)) $text = "SELECT " . implode(", ", array_keys($selects)) . " FROM ($text) WHERE $combinedLimit";
 
 			} else {
 				$text = "SELECT " . implode(", ", array_keys($selects)) . " FROM ($text) WHERE ROWNUM <= " . $sqlQuery->limit;
