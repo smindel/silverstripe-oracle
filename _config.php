@@ -7,6 +7,14 @@ OracleDatabase::$test_config = array(
 );
 
 // $oa = new OracleAdmin($databaseConfig);
+// $oa->dropall();
+// die('done');
+
+// $oa = new OracleAdmin(OracleDatabase::$test_config);
+// $oa->dropall();
+// die('done');
+
+// $oa = new OracleAdmin($databaseConfig);
 // $oa = new OracleAdmin(OracleDatabase::$test_config);
 // $oa->dropall();
 // $oa->listnames();

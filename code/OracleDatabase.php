@@ -240,7 +240,7 @@ class OracleDatabase extends SS_Database {
 	}
 
 	function clearTable($table) {
-		$this->query("DELETE FROM \"{$table}\"");
+		if($table[0] != '_') $this->query("DELETE FROM \"{$table}\"");
 	}
 	
 	/**
@@ -319,11 +319,11 @@ class OracleDatabase extends SS_Database {
 		}
 
 		if($newIndexes) {
-			aDebug('skip adding index', $newIndexes);
+			Debug::dump('skip adding index', $newIndexes);
 			//foreach($newIndexes as $k => $v) $alterList[] .= "ADD " . $this->getIndexSqlDefinition($k, $v);
 		}
 		if($alteredIndexes) {
-			aDebug('skip changing index', $alteredIndexes);
+			Debug::dump('skip changing index', $alteredIndexes);
 			// foreach($alteredIndexes as $k => $v) {
 			// 	$alterList[] .= "DROP INDEX \"$k\"";
 			// 	$alterList[] .= "ADD ". $this->getIndexSqlDefinition($k, $v);
