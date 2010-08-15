@@ -240,6 +240,8 @@ class OracleDatabase extends SS_Database {
 	}
 	
 	function dropTable($table) {
+		$this->query("DELETE FROM \"{$table}\"");
+		return;
 		$this->query("BEGIN FOR i IN (SELECT null FROM user_triggers WHERE trigger_name = '{$table}_trigger') LOOP EXECUTE IMMEDIATE 'DROP TRIGGER \"{$table}_trigger\"'; END LOOP; END; ");
 		$this->query("BEGIN FOR i IN (SELECT null FROM user_sequences WHERE sequence_name = '{$table}_sequence') LOOP EXECUTE IMMEDIATE 'DROP SEQUENCE \"{$table}_sequence\"'; END LOOP; END; ");
 		$this->query("DROP TABLE \"$table\"");
@@ -265,16 +267,16 @@ class OracleDatabase extends SS_Database {
 		if($fields) foreach($fields as $k => $v) $fieldSchemas[] = "\"$k\" $v";
 		if($indexes) foreach($indexes as $k => $v) $indexSchemas .= $this->getIndexSqlDefinition($k, $v) . ",\n";
 
-		// Switch to "CREATE TEMPORARY TABLE" for temporary tables
-		$temporary = empty($options['temporary']) ? '' : 'GLOBAL TEMPORARY';
-
 		$lb = ' ';
-		$this->query("CREATE {$temporary} TABLE \"$table\" (\n\t" . implode(",\n\t", $fieldSchemas) . ",\nPRIMARY KEY (ID))");
-		if(empty($temporary)) {
+		if(empty($options['temporary'])) {
+			$this->query("CREATE TABLE \"$table\" (\n\t" . implode(",\n\t", $fieldSchemas) . ",\nPRIMARY KEY (ID))");
 			$this->query("CREATE SEQUENCE \"$sequence\" START WITH 1 INCREMENT BY 1");
 			$this->query("CREATE OR REPLACE TRIGGER \"$trigger\"{$lb}BEFORE INSERT ON \"{$table}\"{$lb}FOR EACH ROW{$lb}DECLARE{$lb}max_id NUMBER;{$lb}cur_seq NUMBER;{$lb}BEGIN{$lb}IF :new.\"ID\" IS NULL THEN{$lb}SELECT \"$sequence\".nextval INTO :new.\"ID\" FROM DUAL;{$lb}ELSE{$lb}SELECT GREATEST(MAX(\"ID\"), :new.\"ID\") INTO max_id FROM \"$table\";{$lb}SELECT \"$sequence\".nextval INTO cur_seq FROM DUAL;{$lb}WHILE cur_seq < max_id{$lb}LOOP{$lb}SELECT \"$sequence\".nextval INTO cur_seq FROM DUAL;{$lb}END LOOP;{$lb}END IF;{$lb}END;{$lb}");
+		} else {
+			if(!$this->hasTable($table)) $this->query("CREATE GLOBAL TEMPORARY TABLE \"$table\" (\n\t" . implode(",\n\t", $fieldSchemas) . ") ON COMMIT PRESERVE ROWS");
 		}
 
+		
 		if($indexes) {
 			foreach($indexes as $indexName => $indexDetails) {
 				if(is_array($indexDetails)) {
@@ -968,27 +970,27 @@ class OracleDatabase extends SS_Database {
 		}
 
 		if($sqlQuery->limit) {
-			$limit = trim($sqlQuery->limit);
-			// Pass limit as array or SQL string value
-
-			if(!is_array($limit) && preg_match('/^(\d+)\s+OFFSET\s+(\d+)$/',$limit, $matches)) $limit = array('start' => (int)$matches[2], 'limit' => (int)$matches[1]);
-			if(!is_array($limit) && preg_match('/(\d+)\s*,\s*(\d+)/', $limit, $matches)) $limit = array('start' => $matches[1],'limit' => $matches[2]);
-
-			if(is_array($limit)) {
-				if(!array_key_exists('limit',$limit)) user_error('SQLQuery::limit(): Wrong format for $limit', E_USER_ERROR);
-
-				if(isset($limit['start']) && is_numeric($limit['start']) && isset($limit['limit']) && is_numeric($limit['limit'])) {
-					$combinedLimit = "ROWNUM BETWEEN " . ($limit['start'] + 1) . " AND " . ($limit['start'] + $limit['limit']);
-				} elseif(isset($limit['limit']) && is_numeric($limit['limit'])) {
-					$combinedLimit = "ROWNUM <= " . (int)$limit['limit'];
-				} else {
-					$combinedLimit = false;
-				}
-				if(!empty($combinedLimit)) $text = "SELECT " . implode(", ", array_keys($selects)) . " FROM ($text) WHERE $combinedLimit";
-
-			} else {
-				$text = "SELECT " . implode(", ", array_keys($selects)) . " FROM ($text) WHERE ROWNUM <= " . $sqlQuery->limit;
+			
+			$limit = $sqlQuery->limit;
+						
+			if(!is_array($limit)) {
+				$limit = trim($sqlQuery->limit);
+				if(preg_match('/^(\d+)\s+OFFSET\s+(\d+)$/',$limit, $matches)) $limit = array('start' => (int)$matches[2], 'limit' => (int)$matches[1]);
+				else if(preg_match('/(\d+)\s*,\s*(\d+)/', $limit, $matches)) $limit = array('start' => (int)$matches[1], 'limit' => (int)$matches[2]);
+				else $limit = array('limit' => (int)$limit);
 			}
+
+			if(!array_key_exists('limit',$limit)) user_error('SQLQuery::limit(): Wrong format for $limit', E_USER_ERROR);
+
+			if(isset($limit['start'])) {
+				$combinedLimit = "ocirownum BETWEEN " . ($limit['start'] + 1) . " AND " . ($limit['start'] + $limit['limit']);
+			} else if(isset($limit['limit'])) {
+				$combinedLimit = "ocirownum <= " . (int)$limit['limit'];
+			} else {
+				$combinedLimit = false;
+			}
+			
+			if(!empty($combinedLimit)) $text = "SELECT " . implode(", ", array_keys($selects)) . " FROM (SELECT " . implode(", ", array_keys($selects)) . ", ROWNUM ocirownum FROM ($text)) WHERE $combinedLimit";
 		}
 		
 		return $text;
