@@ -181,13 +181,7 @@ class OracleDatabase extends SS_Database {
 		$this->tableList = $this->fieldList = $this->indexList = $this->_idmap = null;
 
 		$oa = new OracleAdmin(OracleDatabase::$test_config);
-		$all = array(
-			'table' => "select * from user_tables",
-			'sequence' => "select * from user_sequences",
-			'trigger' => "select * from user_triggers",
-			'index' => "select index_name from user_indexes",
-		);
-		foreach($all as $type => $sql) if(count($oa->col($sql, $type . '_name'))) trigger_error('Test database is not empty. Please clean up before you run tests.');
+		$oa->dropall(false);
 
 		return true;
 	}
@@ -205,8 +199,8 @@ class OracleDatabase extends SS_Database {
 	 * Use with caution.
 	 */
 	public function dropDatabaseByName($dbName) {
-		$oa = new OracleAdmin(OracleDatabase::$test_config);
-		$oa->dropall(false);
+		// $oa = new OracleAdmin(OracleDatabase::$test_config);
+		// $oa->dropall(false);
 	}
 
 	/**
@@ -269,7 +263,7 @@ class OracleDatabase extends SS_Database {
 		$lb = ' ';
 		$this->query("CREATE $temporary TABLE \"$table\" (\n\t" . implode(",\n\t", $fieldSchemas) . ",\nPRIMARY KEY (ID))");
 		$this->query("CREATE SEQUENCE \"$sequence\" START WITH 1 INCREMENT BY 1");
-		$this->query("CREATE OR REPLACE TRIGGER \"$trigger\"{$lb}BEFORE INSERT ON \"{$table}\" FOR EACH ROW{$lb}BEGIN{$lb}SELECT \"$sequence\".nextval INTO :new.\"ID\" FROM DUAL;{$lb}END;{$lb}");
+		$this->query("CREATE OR REPLACE TRIGGER \"$trigger\"{$lb}BEFORE INSERT ON \"{$table}\"{$lb}FOR EACH ROW{$lb}DECLARE{$lb}max_id NUMBER;{$lb}cur_seq NUMBER;{$lb}BEGIN{$lb}IF :new.\"ID\" IS NULL THEN{$lb}SELECT \"$sequence\".nextval INTO :new.\"ID\" FROM DUAL;{$lb}ELSE{$lb}SELECT GREATEST(MAX(\"ID\"), :new.\"ID\") INTO max_id FROM \"$table\";{$lb}SELECT \"$sequence\".nextval INTO cur_seq FROM DUAL;{$lb}WHILE cur_seq < max_id{$lb}LOOP{$lb}SELECT \"$sequence\".nextval INTO cur_seq FROM DUAL;{$lb}END LOOP;{$lb}END IF;{$lb}END;{$lb}");
 
 		if($indexes) {
 			foreach($indexes as $indexName => $indexDetails) {
@@ -410,7 +404,7 @@ class OracleDatabase extends SS_Database {
 	public function renameField($tableName, $oldName, $newName) {
 		$fieldList = $this->fieldList($tableName);
 		if(array_key_exists($oldName, $fieldList)) {
-			$this->query("ALTER TABLE \"$tableName\" CHANGE \"$oldName\" \"$newName\" " . $fieldList[$oldName]);
+			$this->query("ALTER TABLE \"$tableName\" RENAME COLUMN \"$oldName\" TO \"$newName\"");
 		}
 	}
 
