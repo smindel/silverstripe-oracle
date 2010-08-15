@@ -46,6 +46,7 @@ class OracleDatabase extends SS_Database {
 			$this->databaseError("Couldn't connect to Oracle database");
 		}
 
+		$this->query("ALTER SESSION SET NLS_DATE_FORMAT = 'YYYY-MM-DD'");
 		$this->query("ALTER SESSION SET NLS_TIMESTAMP_FORMAT = 'YYYY-MM-DD HH24:MI:SS'");
 	}
 	
@@ -176,6 +177,7 @@ class OracleDatabase extends SS_Database {
 		if(!$this->dbConn[$this->database]) {
 			$this->databaseError("Couldn't connect to Oracle database");
 		}
+		$this->query("ALTER SESSION SET NLS_DATE_FORMAT = 'YYYY-MM-DD'");
 		$this->query("ALTER SESSION SET NLS_TIMESTAMP_FORMAT = 'YYYY-MM-DD HH24:MI:SS'");
 
 		$this->tableList = $this->fieldList = $this->indexList = $this->_idmap = null;
@@ -237,6 +239,12 @@ class OracleDatabase extends SS_Database {
 		if($table[0] != '_') $this->query("DELETE FROM \"{$table}\"");
 	}
 	
+	function dropTable($table) {
+		$this->query("DROP TRIGGER \"{$table}_trigger\"");
+		$this->query("DROP SEQUENCE \"{$table}_sequence\"");
+		$this->query("DROP TABLE \"$table\"");
+	}
+	
 	/**
 	 * Create a new table.
 	 * @param $tableName The name of the table
@@ -258,10 +266,10 @@ class OracleDatabase extends SS_Database {
 		if($indexes) foreach($indexes as $k => $v) $indexSchemas .= $this->getIndexSqlDefinition($k, $v) . ",\n";
 
 		// Switch to "CREATE TEMPORARY TABLE" for temporary tables
-		$temporary = empty($options['temporary']) ? "" : "TEMPORARY";
+		$temporary = empty($options['temporary']) ? array('', '') : array('GLOBAL TEMPORARY', '');
 
 		$lb = ' ';
-		$this->query("CREATE $temporary TABLE \"$table\" (\n\t" . implode(",\n\t", $fieldSchemas) . ",\nPRIMARY KEY (ID))");
+		$this->query("CREATE {$temporary[0]} TABLE \"$table\" (\n\t" . implode(",\n\t", $fieldSchemas) . ",\nPRIMARY KEY (ID))");
 		$this->query("CREATE SEQUENCE \"$sequence\" START WITH 1 INCREMENT BY 1");
 		$this->query("CREATE OR REPLACE TRIGGER \"$trigger\"{$lb}BEFORE INSERT ON \"{$table}\"{$lb}FOR EACH ROW{$lb}DECLARE{$lb}max_id NUMBER;{$lb}cur_seq NUMBER;{$lb}BEGIN{$lb}IF :new.\"ID\" IS NULL THEN{$lb}SELECT \"$sequence\".nextval INTO :new.\"ID\" FROM DUAL;{$lb}ELSE{$lb}SELECT GREATEST(MAX(\"ID\"), :new.\"ID\") INTO max_id FROM \"$table\";{$lb}SELECT \"$sequence\".nextval INTO cur_seq FROM DUAL;{$lb}WHILE cur_seq < max_id{$lb}LOOP{$lb}SELECT \"$sequence\".nextval INTO cur_seq FROM DUAL;{$lb}END LOOP;{$lb}END IF;{$lb}END;{$lb}");
 
