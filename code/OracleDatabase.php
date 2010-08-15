@@ -240,8 +240,8 @@ class OracleDatabase extends SS_Database {
 	}
 	
 	function dropTable($table) {
-		$this->query("DROP TRIGGER \"{$table}_trigger\"");
-		$this->query("DROP SEQUENCE \"{$table}_sequence\"");
+		$this->query("BEGIN FOR i IN (SELECT null FROM user_triggers WHERE trigger_name = '{$table}_trigger') LOOP EXECUTE IMMEDIATE 'DROP TRIGGER \"{$table}_trigger\"'; END LOOP; END; ");
+		$this->query("BEGIN FOR i IN (SELECT null FROM user_sequences WHERE sequence_name = '{$table}_sequence') LOOP EXECUTE IMMEDIATE 'DROP SEQUENCE \"{$table}_sequence\"'; END LOOP; END; ");
 		$this->query("DROP TABLE \"$table\"");
 	}
 	
@@ -266,12 +266,14 @@ class OracleDatabase extends SS_Database {
 		if($indexes) foreach($indexes as $k => $v) $indexSchemas .= $this->getIndexSqlDefinition($k, $v) . ",\n";
 
 		// Switch to "CREATE TEMPORARY TABLE" for temporary tables
-		$temporary = empty($options['temporary']) ? array('', '') : array('GLOBAL TEMPORARY', '');
+		$temporary = empty($options['temporary']) ? '' : 'GLOBAL TEMPORARY';
 
 		$lb = ' ';
-		$this->query("CREATE {$temporary[0]} TABLE \"$table\" (\n\t" . implode(",\n\t", $fieldSchemas) . ",\nPRIMARY KEY (ID))");
-		$this->query("CREATE SEQUENCE \"$sequence\" START WITH 1 INCREMENT BY 1");
-		$this->query("CREATE OR REPLACE TRIGGER \"$trigger\"{$lb}BEFORE INSERT ON \"{$table}\"{$lb}FOR EACH ROW{$lb}DECLARE{$lb}max_id NUMBER;{$lb}cur_seq NUMBER;{$lb}BEGIN{$lb}IF :new.\"ID\" IS NULL THEN{$lb}SELECT \"$sequence\".nextval INTO :new.\"ID\" FROM DUAL;{$lb}ELSE{$lb}SELECT GREATEST(MAX(\"ID\"), :new.\"ID\") INTO max_id FROM \"$table\";{$lb}SELECT \"$sequence\".nextval INTO cur_seq FROM DUAL;{$lb}WHILE cur_seq < max_id{$lb}LOOP{$lb}SELECT \"$sequence\".nextval INTO cur_seq FROM DUAL;{$lb}END LOOP;{$lb}END IF;{$lb}END;{$lb}");
+		$this->query("CREATE {$temporary} TABLE \"$table\" (\n\t" . implode(",\n\t", $fieldSchemas) . ",\nPRIMARY KEY (ID))");
+		if(empty($temporary)) {
+			$this->query("CREATE SEQUENCE \"$sequence\" START WITH 1 INCREMENT BY 1");
+			$this->query("CREATE OR REPLACE TRIGGER \"$trigger\"{$lb}BEFORE INSERT ON \"{$table}\"{$lb}FOR EACH ROW{$lb}DECLARE{$lb}max_id NUMBER;{$lb}cur_seq NUMBER;{$lb}BEGIN{$lb}IF :new.\"ID\" IS NULL THEN{$lb}SELECT \"$sequence\".nextval INTO :new.\"ID\" FROM DUAL;{$lb}ELSE{$lb}SELECT GREATEST(MAX(\"ID\"), :new.\"ID\") INTO max_id FROM \"$table\";{$lb}SELECT \"$sequence\".nextval INTO cur_seq FROM DUAL;{$lb}WHILE cur_seq < max_id{$lb}LOOP{$lb}SELECT \"$sequence\".nextval INTO cur_seq FROM DUAL;{$lb}END LOOP;{$lb}END IF;{$lb}END;{$lb}");
+		}
 
 		if($indexes) {
 			foreach($indexes as $indexName => $indexDetails) {
@@ -966,15 +968,11 @@ class OracleDatabase extends SS_Database {
 		}
 
 		if($sqlQuery->limit) {
-			$limit = $sqlQuery->limit;
+			$limit = trim($sqlQuery->limit);
 			// Pass limit as array or SQL string value
 
-			// if(is_string($limit) && preg_match('/(\d+)\s*,\s*(\d+)/', trim($limit), $matches)) {
-			// 	$limit = array(
-			// 		'start' => $matches[1],
-			// 		'limit' => $matches[2],
-			// 	);
-			// }
+			if(!is_array($limit) && preg_match('/^(\d+)\s+OFFSET\s+(\d+)$/',$limit, $matches)) $limit = array('start' => (int)$matches[2], 'limit' => (int)$matches[1]);
+			if(!is_array($limit) && preg_match('/(\d+)\s*,\s*(\d+)/', $limit, $matches)) $limit = array('start' => $matches[1],'limit' => $matches[2]);
 
 			if(is_array($limit)) {
 				if(!array_key_exists('limit',$limit)) user_error('SQLQuery::limit(): Wrong format for $limit', E_USER_ERROR);
