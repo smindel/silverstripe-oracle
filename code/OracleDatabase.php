@@ -97,7 +97,7 @@ class OracleDatabase extends SS_Database {
 	public function query($sql, $errorLevel = E_USER_ERROR) {
 		
 		$pattern = '/"(\w{31,})"'.'(?=(?:(?:(?:[^\'\\\]++|\\.)*+\'){2})*+(?:[^\'\\\]++|\\.)*+$)/i';
-		$sql = preg_replace_callback($pattern, 'OracleDatabase::mapinvalifidentifiers', $sql);
+		$sql = preg_replace_callback($pattern, array('OracleDatabase', 'mapinvalifidentifiers'), $sql);
 
 		if(isset($_REQUEST['previewwrite']) && in_array(strtolower(substr($sql,0,strpos($sql,' '))), array('insert','update','delete','replace'))) {
 			Debug::message("Will execute: $sql");
@@ -305,7 +305,6 @@ class OracleDatabase extends SS_Database {
 	 * @param $alteredOptions
 	 */
 	public function alterTable($tableName, $newFields = null, $newIndexes = null, $alteredFields = null, $alteredIndexes = null, $alteredOptions = null, $advancedOptions = null) {
-		
 		$fieldSchemas = $indexSchemas = "";
 		$alterList = array();
 
@@ -425,7 +424,23 @@ class OracleDatabase extends SS_Database {
 	public function fieldList($table) {
 		
 		$table = $this->_name($table);
-		$fields = DB::query("SELECT * FROM USER_TAB_COLUMNS WHERE TABLE_NAME = '$table' ORDER BY COLUMN_ID");
+		$fields = DB::query("
+			SELECT
+				CASE WHEN \"_IDENTIFIER_MAPPING\".\"Name\" IS NOT NULL THEN \"_IDENTIFIER_MAPPING\".\"Name\" ELSE USER_TAB_COLUMNS.COLUMN_NAME END AS \"Columnname\",
+				DATA_TYPE,
+				DATA_PRECISION,
+				DATA_SCALE,
+				DATA_LENGTH,
+				DATA_DEFAULT,
+				NULLABLE
+			FROM
+				USER_TAB_COLUMNS
+			LEFT JOIN
+				\"_IDENTIFIER_MAPPING\" ON USER_TAB_COLUMNS.COLUMN_NAME = \"_IDENTIFIER_MAPPING\".\"Identifier\"
+			WHERE
+				TABLE_NAME = '$table'
+			ORDER BY
+				COLUMN_ID");
 
 		foreach($fields as $field) {
 
@@ -449,7 +464,7 @@ class OracleDatabase extends SS_Database {
 				$fieldSpec .= ' NOT NULL';
 			}
 
-			$fieldList[$this->_name($field['COLUMN_NAME'])] = $fieldSpec;
+			$fieldList[$field['Columnname']] = $fieldSpec;
 		}
 		return $fieldList;
 	}
@@ -1098,15 +1113,25 @@ class OracleDatabase extends SS_Database {
 		preg_match_all('/%(.)/', $format, $matches);
 		foreach($matches[1] as $match) if(array_search($match, array('Y','m','d','H','i','s','U')) === false) user_error('formattedDatetimeClause(): unsupported format character %' . $match, E_USER_WARNING);
 
+		$translate = array(
+			'/%Y/' => 'YYYY',
+			'/%m/' => 'MM',
+			'/%d/' => 'DD',
+			'/%H/' => 'HH24',
+			'/%i/' => 'MI',
+			'/%s/' => 'SS',
+		);
+		$format = preg_replace(array_keys($translate), array_values($translate), $format);
+
 		if(preg_match('/^now$/i', $date)) {
-			$date = "NOW()";
+			$date = "SYSDATE";
 		} else if(preg_match('/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/i', $date)) {
-			$date = "'$date'";
+			$date = "TO_DATE('$date', 'YYYY-MM-DD HH24:MI:SS')";
 		}
 
-		if($format == '%U') return "UNIX_TIMESTAMP($date)";
+		if($format == '%U') return "ROUND(TO_NUMBER($date - TO_DATE('01-01-1970 00:00:00', 'DD-MM-YYYY HH24:MI:SS')) * 24 * 60 * 60)";
 
-		return "DATE_FORMAT($date, '$format')";
+		return "TO_CHAR($date, '$format')";
 
 	}
 
